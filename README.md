@@ -178,21 +178,21 @@ curl -X POST https://your-domain.com/superconnect \
 <details>
 <summary>Главное меню</summary>
 
-![Главное меню](screenshots/main_menu.png)
+![Главное меню](screenshots/main_menu.jpg)
 
 </details>
 
 <details>
 <summary>Создание тикета</summary>
 
-![Создание тикета](screenshots/create_ticket.png)
+![Создание тикета](screenshots/create_ticket.jpg)
 
 </details>
 
 <details>
 <summary>Диалог по тикету</summary>
 
-![Диалог по тикету](screenshots/ticket_dialog.png)
+![Диалог по тикету](screenshots/ticket_dialog.jpg)
 
 </details>
 
