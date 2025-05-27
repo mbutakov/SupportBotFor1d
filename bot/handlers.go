@@ -168,6 +168,71 @@ func safeSend(bot *tgbotapi.BotAPI, chattable tgbotapi.Chattable) {
 	// Удаляем все задержки
 }
 
+// Добавляем новую функцию для сохранения аватара
+func saveUserAvatar(bot *tgbotapi.BotAPI, userID int64) error {
+	// Получаем фотографии профиля пользователя
+	photos, err := bot.GetUserProfilePhotos(tgbotapi.UserProfilePhotosConfig{
+		UserID: userID,
+		Limit:  1,
+	})
+	if err != nil {
+		return fmt.Errorf("ошибка при получении фото профиля: %v", err)
+	}
+
+	// Если у пользователя нет фотографий профиля, обновляем статус и выходим
+	if photos.TotalCount == 0 {
+		err = database.UpdateUserAvatar(userID, false)
+		if err != nil {
+			logger.Error.Printf("Ошибка при обновлении статуса аватара пользователя %d: %v", userID, err)
+		}
+		return nil
+	}
+
+	// Получаем самую последнюю фотографию в максимальном размере
+	photo := photos.Photos[0][len(photos.Photos[0])-1]
+
+	// Получаем файл
+	fileURL, err := bot.GetFileDirectURL(photo.FileID)
+	if err != nil {
+		return fmt.Errorf("ошибка при получении URL фото: %v", err)
+	}
+
+	// Создаем директорию для аватаров, если её нет
+	avatarsDir := filepath.Join("..", "uploads", "avatars")
+	if err := os.MkdirAll(avatarsDir, 0755); err != nil {
+		return fmt.Errorf("ошибка при создании директории аватаров: %v", err)
+	}
+
+	// Скачиваем файл
+	resp, err := http.Get(fileURL)
+	if err != nil {
+		return fmt.Errorf("ошибка при скачивании фото: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Создаем файл для сохранения
+	avatarPath := filepath.Join(avatarsDir, fmt.Sprintf("%d.png", userID))
+	file, err := os.Create(avatarPath)
+	if err != nil {
+		return fmt.Errorf("ошибка при создании файла: %v", err)
+	}
+	defer file.Close()
+
+	// Копируем содержимое
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		return fmt.Errorf("ошибка при сохранении фото: %v", err)
+	}
+
+	// Обновляем статус аватара в базе данных
+	err = database.UpdateUserAvatar(userID, true)
+	if err != nil {
+		logger.Error.Printf("Ошибка при обновлении статуса аватара пользователя %d: %v", userID, err)
+	}
+
+	return nil
+}
+
 // Обработчик команды /start
 func HandleStart(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	userID := message.From.ID
@@ -287,6 +352,19 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		// Устанавливаем дату рождения по умолчанию (нулевая дата)
 		state.BirthDate = time.Time{}
 
+		// Пытаемся сохранить аватар пользователя
+		hasAvatar := false
+		err := saveUserAvatar(bot, userID)
+		if err != nil {
+			logger.Warning.Printf("Не удалось сохранить аватар пользователя %d: %v", userID, err)
+		} else {
+			// Проверяем наличие файла аватара
+			avatarPath := filepath.Join("..", "uploads", "avatars", fmt.Sprintf("%d.png", userID))
+			if _, err := os.Stat(avatarPath); err == nil {
+				hasAvatar = true
+			}
+		}
+
 		// Завершаем регистрацию
 		user := &database.User{
 			ID:           userID,
@@ -296,9 +374,10 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 			LocationLng:  state.LocationLng,
 			BirthDate:    state.BirthDate,
 			IsRegistered: true,
+			HasAvatar:    hasAvatar,
 		}
 
-		err := database.UpdateUserRegistration(user)
+		err = database.UpdateUserRegistration(user)
 		if err != nil {
 			logger.Error.Printf("Ошибка при обновлении данных пользователя %d: %v", userID, err)
 			SendErrorMessage(bot, message.Chat.ID, "Произошла ошибка при регистрации")

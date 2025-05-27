@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
         location_lng DOUBLE PRECISION,
         birth_date DATE,
         is_registered BOOLEAN NOT NULL DEFAULT FALSE,
-        registered_at TIMESTAMPTZ
+        registered_at TIMESTAMPTZ,
+        has_avatar BOOLEAN NOT NULL DEFAULT FALSE
     )
 
     -- Таблица для хранения информации о фотографиях в тикетах

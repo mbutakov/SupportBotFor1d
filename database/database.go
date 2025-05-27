@@ -126,6 +126,7 @@ type User struct {
 	BirthDate    time.Time
 	IsRegistered bool
 	RegisteredAt time.Time
+	HasAvatar    bool
 }
 
 // Ticket представляет тикет поддержки
@@ -183,10 +184,11 @@ func UpdateUserRegistration(user *User) error {
 		location_lng = $4, 
 		birth_date = $5, 
 		is_registered = $6, 
-		registered_at = $7 
-		WHERE id = $8`,
+		registered_at = $7,
+		has_avatar = $8 
+		WHERE id = $9`,
 		user.FullName, user.Phone, user.LocationLat, user.LocationLng,
-		user.BirthDate, user.IsRegistered, time.Now(), user.ID,
+		user.BirthDate, user.IsRegistered, time.Now(), user.HasAvatar, user.ID,
 	)
 	return err
 }
@@ -221,11 +223,12 @@ func GetUserByID(userID int64) (*User, error) {
 	user := &User{}
 	err := DB.QueryRow(
 		`SELECT id, full_name, phone, location_lat, location_lng, 
-		birth_date, is_registered, registered_at FROM users WHERE id = $1`,
+		birth_date, is_registered, registered_at, has_avatar FROM users WHERE id = $1`,
 		userID,
 	).Scan(
 		&user.ID, &user.FullName, &user.Phone, &user.LocationLat,
 		&user.LocationLng, &user.BirthDate, &user.IsRegistered, &user.RegisteredAt,
+		&user.HasAvatar,
 	)
 	if err != nil {
 		return nil, err
@@ -462,4 +465,13 @@ func GetTicketPhotos(ticketID int) ([]TicketPhoto, error) {
 	}
 
 	return photos, nil
+}
+
+// UpdateUserAvatar обновляет статус аватара пользователя
+func UpdateUserAvatar(userID int64, hasAvatar bool) error {
+	_, err := DB.Exec(
+		"UPDATE users SET has_avatar = $1 WHERE id = $2",
+		hasAvatar, userID,
+	)
+	return err
 }
