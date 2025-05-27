@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
         user_id BIGINT NOT NULL REFERENCES users(id),
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('создан', 'назначен', 'в работе', 'ожидает ответа пользователя', 'ожидает действий поддержки', 'закрыт', 'отменён')),
         category TEXT NOT NULL DEFAULT 'спросить',
         created_at TIMESTAMPTZ NOT NULL,
         closed_at TIMESTAMPTZ
@@ -51,4 +51,5 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
     CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ticket_photos_ticket_id_created ON ticket_photos(ticket_id, created_at);
     
     -- Add partial index for active tickets only
-    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tickets_active ON tickets(user_id, created_at) WHERE status != 'closed';
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tickets_active ON tickets(user_id, created_at) 
+    WHERE status NOT IN ('закрыт', 'отменён');

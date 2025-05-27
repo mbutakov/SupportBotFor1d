@@ -264,7 +264,7 @@ func CreateTicket(ticket *Ticket) (int, error) {
 func GetActiveTicketsByUserID(userID int64) ([]Ticket, error) {
 	rows, err := DB.Query(
 		`SELECT id, user_id, title, description, status, category, created_at, closed_at 
-		FROM tickets WHERE user_id = $1 AND status != 'закрыт' ORDER BY created_at DESC`,
+		FROM tickets WHERE user_id = $1 AND status NOT IN ('закрыт', 'отменён') ORDER BY created_at DESC`,
 		userID,
 	)
 	if err != nil {

@@ -33,6 +33,42 @@ type UserState struct {
 // userStates хранит состояния всех пользователей
 var userStates = make(map[int64]*UserState)
 
+// --- СТАТУСЫ ТИКЕТОВ ---
+const (
+	StatusCreated        = "created"         // 🆕 Создан
+	StatusAssigned       = "assigned"        // 👨‍💻 Назначен
+	StatusInProgress     = "in_progress"     // 🔧 В работе
+	StatusWaitingUser    = "waiting_user"    // ❓ Ожидает ответа пользователя
+	StatusWaitingSupport = "waiting_support" // ⏳ Ожидает действий поддержки
+	StatusResolved       = "resolved"        // ✅ Решён
+	StatusClosed         = "closed"          // 🗃 Закрыт
+	StatusCancelled      = "cancelled"       // 🚫 Отменён
+)
+
+// GetStatusEmojiAndText возвращает эмодзи и описание статуса тикета
+func GetStatusEmojiAndText(status string) (string, string) {
+	switch status {
+	case StatusCreated:
+		return "🆕", "Создан: тикет ожидает назначения агенту"
+	case StatusAssigned:
+		return "👨‍💻", "Назначен: ожидает начала работы агентом"
+	case StatusInProgress:
+		return "🔧", "В работе: агент работает над тикетом"
+	case StatusWaitingUser:
+		return "❓", "Ожидает ответа пользователя"
+	case StatusWaitingSupport:
+		return "⏳", "Ожидает действий поддержки"
+	case StatusResolved:
+		return "✅", "Решён: предложено решение, ожидает подтверждения"
+	case StatusClosed:
+		return "🗃", "Закрыт"
+	case StatusCancelled:
+		return "🚫", "Отменён: тикет не требует решения"
+	default:
+		return "❔", status
+	}
+}
+
 // Валидация ФИО
 func validateFullName(name string) bool {
 	// Проверяем длину (минимум 2 слова, каждое не короче 2 символов)
@@ -189,6 +225,12 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 			return
 		} else {
 			// Начинаем процесс регистрации
+			err := database.CreateUser(userID)
+			if err != nil {
+				logger.Error.Printf("Ошибка при создании пользователя %d: %v", userID, err)
+				SendErrorMessage(bot, message.Chat.ID, "Произошла ошибка при регистрации")
+				return
+			}
 			userStates[userID] = &UserState{State: "awaiting_fullname"}
 
 			msg := tgbotapi.NewMessage(message.Chat.ID,
@@ -346,7 +388,7 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 				UserID:      userID,
 				Title:       state.TicketTitle,
 				Description: state.TicketDesc,
-				Status:      "открыт",
+				Status:      "создан",
 				Category:    state.TicketCat,
 			}
 
@@ -520,11 +562,7 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 				return
 			}
 
-			// Генерируем имя файла и полный путь
-			fileName := fmt.Sprintf("%d_%s.jpg", time.Now().Unix(), photo.FileID)
-			filePath := filepath.Join(ticketDir, fileName)
-
-			// Скачиваем файл
+			// Определяем расширение файла из URL или Content-Type
 			resp, err := http.Get(fileURL)
 			if err != nil {
 				logger.Error.Printf("Ошибка при скачивании фото: %v", err)
@@ -532,6 +570,24 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 				return
 			}
 			defer resp.Body.Close()
+
+			// Определяем расширение файла из Content-Type
+			contentType := resp.Header.Get("Content-Type")
+			ext := ".jpg" // По умолчанию
+			switch contentType {
+			case "image/jpeg", "image/jpg":
+				ext = ".jpg"
+			case "image/png":
+				ext = ".png"
+			case "image/gif":
+				ext = ".gif"
+			case "image/webp":
+				ext = ".webp"
+			}
+
+			// Генерируем имя файла и полный путь
+			fileName := fmt.Sprintf("%d_%s%s", time.Now().Unix(), photo.FileID, ext)
+			filePath := filepath.Join(ticketDir, fileName)
 
 			// Создаем файл для сохранения
 			file, err := os.Create(filePath)
@@ -583,7 +639,7 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 			}
 
 			// Обновляем статус тикета на "ожидает ответа"
-			err = database.UpdateTicketStatus(state.TicketID, "ожидает ответа")
+			err = database.UpdateTicketStatus(state.TicketID, "Ожидает действий поддержки")
 			if err != nil {
 				logger.Error.Printf("Ошибка при обновлении статуса тикета %d: %v", state.TicketID, err)
 			}

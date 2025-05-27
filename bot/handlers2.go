@@ -50,8 +50,8 @@ func HandleMainMenu(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 			statusEmoji := getStatusEmoji(ticket.Status)
 
 			// Создаем кнопку с информацией о тикете
-			buttonLabel := fmt.Sprintf("#%d %s %s [%d сообщ.]",
-				ticket.ID, statusEmoji, truncateString(ticket.Title, 25), count)
+			buttonLabel := fmt.Sprintf("#%d %s %s | %d смс",
+				ticket.ID, statusEmoji, ticket.Title, count)
 
 			ticketButtons = append(ticketButtons, tgbotapi.NewKeyboardButtonRow(
 				tgbotapi.NewKeyboardButton(buttonLabel),
@@ -104,8 +104,12 @@ func HandleMainMenu(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		headerMsg.ReplyMarkup = GetMainMenuKeyboard()
 		SafeSendMessage(bot, headerMsg)
 
-		// Отправляем каждый тикет как отдельное сообщение
-		for _, ticket := range ticketsToShow {
+		// Формируем блоки тикетов с учетом ограничения размера сообщения
+		const maxMessageSize = 4000 // Оставляем запас от максимального размера 4096
+		var currentBlock strings.Builder
+		messageCounter := 0
+
+		for i, ticket := range ticketsToShow {
 			// Получаем количество сообщений в тикете
 			count, err := database.GetTicketMessageCount(ticket.ID)
 			if err != nil {
@@ -125,12 +129,12 @@ func HandleMainMenu(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 				closedDate = fmt.Sprintf("\n🔒 Закрыт: %s", ticket.ClosedAt.Time.Format("02.01.2006 15:04"))
 			}
 
-			// Создаем сообщение с информацией о тикете
-			ticketMsg := fmt.Sprintf(
-				"🔖 *Тикет #%d*\n%s %s\n\n📝 Категория: %s\n📅 Создан: %s%s\n💬 Сообщений: %d\n\nЧтобы просмотреть этот тикет, отправьте команду:\n`/ticket %d`",
+			// Формируем текст для одного тикета
+			ticketText := fmt.Sprintf(
+				"🔖 *Тикет #%d*\n%s %s\n\n📝 Категория: %s\n📅 Создан: %s%s\n💬 Сообщений: %d\n\nЧтобы просмотреть этот тикет, отправьте команду:\n`/ticket %d`\n\n",
 				ticket.ID,
 				statusEmoji,
-				ticket.Title,
+				strings.ReplaceAll(ticket.Title, "*", "\\*"), // Экранируем звездочки
 				ticket.Category,
 				createdDate,
 				closedDate,
@@ -138,12 +142,30 @@ func HandleMainMenu(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 				ticket.ID,
 			)
 
-			msg := tgbotapi.NewMessage(message.Chat.ID, ticketMsg)
-			msg.ParseMode = "Markdown"
-			SafeSendMessage(bot, msg)
+			// Если добавление нового тикета превысит лимит или это последний тикет
+			if currentBlock.Len()+len(ticketText) > maxMessageSize || i == len(ticketsToShow)-1 {
+				// Если это не первый блок и есть что отправить
+				if currentBlock.Len() > 0 {
+					msg := tgbotapi.NewMessage(message.Chat.ID, currentBlock.String())
+					msg.ParseMode = "Markdown"
+					SafeSendMessage(bot, msg)
+					messageCounter++
+					currentBlock.Reset()
+				}
 
-			// Добавляем небольшую задержку между сообщениями, чтобы избежать флуда
-			time.Sleep(100 * time.Millisecond)
+				// Добавляем текущий тикет в новый блок
+				currentBlock.WriteString(ticketText)
+
+				// Если это последний тикет, отправляем оставшийся блок
+				if i == len(ticketsToShow)-1 && currentBlock.Len() > 0 {
+					msg := tgbotapi.NewMessage(message.Chat.ID, currentBlock.String())
+					msg.ParseMode = "Markdown"
+					SafeSendMessage(bot, msg)
+				}
+			} else {
+				// Добавляем тикет к текущему блоку
+				currentBlock.WriteString(ticketText)
+			}
 		}
 
 		// Устанавливаем состояние просмотра истории тикетов
@@ -201,14 +223,20 @@ func getStatusEmoji(status string) string {
 // GetStatusEmoji возвращает эмодзи статуса тикета (экспортируемая функция)
 func GetStatusEmoji(status string) string {
 	switch status {
-	case "открыт":
-		return "🌟" // Новый тикет
+	case "создан":
+		return "🆕" // Новый тикет
+	case "назначен":
+		return "👨‍💻" // Тикет назначен агенту
 	case "в работе":
-		return "🔄" // Тикет в работе
-	case "ожидает ответа":
-		return "💭" // Ожидает ответа
+		return "🔧" // Тикет в работе
+	case "ожидает ответа пользователя":
+		return "❓" // Ожидает ответа пользователя
+	case "ожидает действий поддержки":
+		return "⏳" // Ожидает действий поддержки
 	case "закрыт":
-		return "✨" // Закрытый тикет
+		return "🗃" // Закрытый тикет
+	case "отменён":
+		return "🚫" // Отменённый тикет
 	default:
 		return "❓" // Неизвестный статус
 	}
@@ -609,9 +637,6 @@ func showTicketPhotos(bot *tgbotapi.BotAPI, chatID int64, ticketID int) {
 	}
 
 	for i, photo := range photos {
-		// Вместо использования FileID, прочитаем файл с диска
-		var photoMsg tgbotapi.PhotoConfig
-
 		// Проверяем, существует ли файл
 		_, err := os.Stat(photo.FilePath)
 		if err != nil {
@@ -633,9 +658,15 @@ func showTicketPhotos(bot *tgbotapi.BotAPI, chatID int64, ticketID int) {
 		}
 		defer file.Close()
 
+		// Определяем расширение файла из пути
+		ext := filepath.Ext(photo.FilePath)
+		if ext == "" {
+			ext = ".jpg" // По умолчанию используем .jpg
+		}
+
 		// Создаем новую фотографию из файла
-		photoMsg = tgbotapi.NewPhoto(chatID, tgbotapi.FileReader{
-			Name:   fmt.Sprintf("photo_%d.jpg", i+1),
+		photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FileReader{
+			Name:   fmt.Sprintf("photo_%d%s", i+1, ext),
 			Reader: file,
 		})
 
@@ -661,7 +692,7 @@ func showTicketPhotos(bot *tgbotapi.BotAPI, chatID int64, ticketID int) {
 		if err != nil {
 			logger.Error.Printf("Ошибка при отправке фото %s: %v", photo.FilePath, err)
 			errorMsg := tgbotapi.NewMessage(chatID,
-				fmt.Sprintf("⚠️ Не удалось отправить фото #%d", i+1))
+				fmt.Sprintf("⚠️ Не удалось отправить фото #%d: %v", i+1, err))
 			SafeSendMessage(bot, errorMsg)
 		}
 

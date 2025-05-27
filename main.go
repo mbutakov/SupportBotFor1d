@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -355,12 +357,12 @@ func handleUpdate(botAPI *tgbotapi.BotAPI, update tgbotapi.Update) {
 				"🔖 *Тикет #%d*\n%s %s\n\n📝 Категория: %s\n📅 Создан: %s%s\n💬 Сообщений: %d\n\n*Описание:*\n%s",
 				ticket.ID,
 				statusEmoji,
-				ticket.Title,
+				strings.ReplaceAll(ticket.Title, "*", "\\*"), // Экранируем звездочки
 				ticket.Category,
 				createdDate,
 				closedDate,
 				len(messages),
-				ticket.Description,
+				strings.ReplaceAll(ticket.Description, "*", "\\*"), // Экранируем звездочки
 			)
 
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, ticketInfo)
@@ -372,11 +374,14 @@ func handleUpdate(botAPI *tgbotapi.BotAPI, update tgbotapi.Update) {
 				historyMsg := "📜 *История сообщений:*\n\n"
 				for i, m := range messages {
 					senderType := "👤 Вы"
-					if m.SenderType == "admin" {
+					if m.SenderType == "admin" || m.SenderType == "support" {
 						senderType = "👨‍💼 Поддержка"
 					}
 					msgTime := m.CreatedAt.Format("02.01.2006 15:04")
-					historyMsg += fmt.Sprintf("%d. %s (%s):\n%s\n\n", i+1, senderType, msgTime, m.Message)
+					// Экранируем специальные символы в сообщении
+					messageText := strings.ReplaceAll(m.Message, "*", "\\*")
+					messageText = strings.ReplaceAll(messageText, "_", "\\_")
+					historyMsg += fmt.Sprintf("%d. %s (%s):\n%s\n\n", i+1, senderType, msgTime, messageText)
 				}
 
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, historyMsg)
@@ -384,25 +389,59 @@ func handleUpdate(botAPI *tgbotapi.BotAPI, update tgbotapi.Update) {
 				bot.SafeSendMessage(botAPI, msg)
 			}
 
-			// Получаем фотографии тикета
+			// Получаем и отправляем фотографии тикета
 			photos, err := database.GetTicketPhotos(ticketID)
 			if err != nil {
 				logger.Error.Printf("Ошибка при получении фотографий тикета %d: %v", ticketID, err)
 			} else if len(photos) > 0 {
-				photoMsg := fmt.Sprintf("📷 *Фотографии (%d):*", len(photos))
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, photoMsg)
-				msg.ParseMode = "Markdown"
-				bot.SafeSendMessage(botAPI, msg)
+				photoMsg := tgbotapi.NewMessage(update.Message.Chat.ID, "📸 *Прикрепленные фотографии:*")
+				photoMsg.ParseMode = "Markdown"
+				bot.SafeSendMessage(botAPI, photoMsg)
 
-				// Отправляем каждую фотографию
-				for _, photo := range photos {
-					photoMsg := tgbotapi.NewPhoto(update.Message.Chat.ID, tgbotapi.FileID(photo.FileID))
-					_, err := botAPI.Send(photoMsg)
+				for i, photo := range photos {
+					file, err := os.Open(photo.FilePath)
 					if err != nil {
-						logger.Error.Printf("Ошибка при отправке фото %s: %v", photo.FileID, err)
+						logger.Error.Printf("Ошибка при открытии файла %s: %v", photo.FilePath, err)
+						continue
 					}
+					defer file.Close()
+
+					ext := filepath.Ext(photo.FilePath)
+					if ext == "" {
+						ext = ".jpg"
+					}
+
+					photoConfig := tgbotapi.NewPhoto(update.Message.Chat.ID, tgbotapi.FileReader{
+						Name:   fmt.Sprintf("photo_%d%s", i+1, ext),
+						Reader: file,
+					})
+
+					caption := fmt.Sprintf("📷 Фото #%d", i+1)
+					if photo.SenderType == "user" {
+						caption += " (от вас)"
+					} else {
+						caption += " (от поддержки)"
+					}
+					photoConfig.Caption = caption
+
+					_, err = botAPI.Send(photoConfig)
+					if err != nil {
+						logger.Error.Printf("Ошибка при отправке фото %s: %v", photo.FilePath, err)
+					}
+
+					time.Sleep(100 * time.Millisecond) // Небольшая задержка между отправкой фото
 				}
 			}
+
+			// Показываем клавиатуру для навигации
+			keyboard := tgbotapi.NewReplyKeyboard(
+				tgbotapi.NewKeyboardButtonRow(
+					tgbotapi.NewKeyboardButton("⬅️ Назад к истории"),
+				),
+			)
+			navMsg := tgbotapi.NewMessage(update.Message.Chat.ID, "Используйте кнопку ниже для возврата к истории тикетов")
+			navMsg.ReplyMarkup = keyboard
+			bot.SafeSendMessage(botAPI, navMsg)
 		default:
 			// Неизвестные команды обрабатываем как обычные сообщения
 			bot.HandleMessage(botAPI, update.Message)
